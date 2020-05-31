@@ -1,0 +1,237 @@
+#Network in Network Implementation of CIFAR-10
+
+
+from __future__ import print_function
+
+from keras.models import Sequential
+from keras.layers import Dropout, Activation, Conv2D, AveragePooling2D,GlobalAveragePooling2D, MaxPooling2D,merge
+from keras.utils import np_utils
+from keras.optimizers import SGD
+from keras.models import Model
+from keras.layers.core import Lambda
+from keras.callbacks import ModelCheckpoint
+from keras import regularizers
+import pandas
+import cPickle
+import math
+import numpy as np
+
+batch_size = 128
+nb_classes = 10
+nb_epoch = 20
+
+#unpickle is load the cifar 10 data stored in pickled files
+
+def unpickle(file):
+    
+    with open(file, 'rb') as fo:
+        dict = cPickle.load(fo)
+    return dict
+
+rows, cols = 32, 32
+channels = 3
+
+#datapower 256 contains data which has 256 colours without quantization
+x = unpickle('datapower4')
+X_train=x['data'][:40000]
+print('X_train shape:', X_train.shape)
+print(X_train.shape[0], 'train samples')
+xx=unpickle('datalabels')
+Y_train=xx['labels'][:40000]
+"""
+#test batch
+test=unpickle('testbatch')
+X_test=test['data']
+Y_test=test['labels']
+print('X_test shape:', X_test.shape)
+print(X_test.shape[0], 'test samples')
+"""
+#validation batch
+valid=unpickle('validation_batch')
+X_valid=valid['data']
+Y_valid=valid['labels']
+print('X_validion shape:', X_valid.shape)
+print(X_valid.shape[0], 'validation samples')
+
+
+
+Y_train = np_utils.to_categorical(Y_train, nb_classes)
+
+Y_valid = np_utils.to_categorical(Y_valid, nb_classes)
+
+
+def create_model():
+
+    model = Sequential()
+
+    
+    model.add(ZeroPadding2D(padding=(2, 2), data_format=None))
+    #conv1
+    model.add(Conv2D(192, (5, 5), padding = 'same',kernel_initializer=keras.initializers.Constant(value=0.05),kernel_regularizer=regularizers.l2(0.00001),input_shape=(32,32,3)))
+    model.add(Activation('relu'))
+    
+    #mlpconv1
+    model.add(Conv2D(160, (1, 1),padding='same',kernel_regularizer=regularizers.l2(0.00001)))
+    model.add(Activation('relu'))
+
+    #mlpconv2
+    model.add(Conv2D(96, (1,1), padding = 'same',activation='relu',kernel_regularizer=regularizers.l2(0.00001)))
+  
+
+    #Max pooling layer 1
+    model.add(MaxPooling2D(pool_size=(3,3),strides=(2,2)))
+
+    #Dropout 1
+    model.add(Dropout(0.5))
+
+    model.add(ZeroPadding2D(padding=(2, 2), data_format=None))
+   
+    #conv2
+    model.add(Conv2D(192, (5,5), padding='same',kernel_regularizer=regularizers.l2(0.00001)))
+    model.add(Activation('relu'))
+
+    #mlpconv3
+    model.add(Conv2D(192, (1,1), padding = 'same'),kernel_regularizer=regularizers.l2(0.00001))
+    model.add(Activation('relu'))
+
+    #mlpconv4
+    model.add(Conv2D(192, (1,1),padding='same'),kernel_regularizer=regularizers.l2(0.00001))
+    model.add(Activation('relu'))
+
+
+
+    #Max pooling layer2
+    model.add(MaxPooling2D(pool_size=(3,3),strides=(2,2)))
+
+    #Dropout2
+    model.add(Dropout(0.5)) 
+
+    model.add(ZeroPadding2D(padding=(1,1), data_format=None))  
+  
+    #conv3
+    model.add(Conv2D(192, (3, 3),padding='same',kernel_regularizer=regularizers.l2(0.00001)))
+    model.add(Activation('relu'))
+
+    #mlpconv5
+    model.add(Conv2D(192, (1,1),padding='same',kernel_regularizer=regularizers.l2(0.00001)))
+    model.add(Activation('relu')) 
+
+    
+    #mlpconv6
+    model.add(Conv2D(10, (1,1), padding='valid',kernel_regularizer=regularizers.l2(0.00001)))
+
+
+
+    #Average pooling 1
+    model.add(AveragePooling2D(pool_size=(8,8),strides=(1,1)))
+
+    model.add(Activation('softmax'))
+    return model
+
+
+
+
+X_train = X_train.astype('float32')
+#X_test = X_test.astype('float32')
+X_valid = X_valid.astype('float32')
+X_train /= 255
+#X_test /= 255
+X_valid/=255
+
+
+
+# Global Contrast Normalization
+mean = np.mean(X_train, axis=0).astype(np.float32)
+mean = np.mean(X_valid, axis=0).astype(np.float32)
+std = np.mean(X_train, axis=0).astype(np.float32)
+std = np.mean(X_valid, axis=0).astype(np.float32)
+
+X_train = X_train.astype(np.float32) - mean
+X_train/=std
+X_valid = X_valid.astype(np.float32) - mean
+X_valid/=std
+
+
+
+def zca_whiten(X):
+    """
+    Applies ZCA whitening to the data (X)
+    http://xcorr.net/2011/05/27/whiten-a-matrix-matlab-code/
+
+    X: numpy 2d array
+        input data, rows are data points, columns are features
+
+    Returns: ZCA whitened 2d array
+    """
+    assert(X.ndim == 2)
+    EPS = 10e-5
+
+    #   covariance matrix
+    cov = np.dot(X.T, X)
+    #   d = (lambda1, lambda2, ..., lambdaN)
+    d, E = np.linalg.eigh(cov)
+    #   D = diag(d) ^ (-1/2)
+    D = np.diag(1. / np.sqrt(d + EPS))
+    #   W_zca = E * D * E.T
+    W = np.dot(np.dot(E, D), E.T)
+
+    X_white = np.dot(X, W)
+
+    return X_white
+
+zca_whiten(X_train)
+zca_whiten(X_valid)
+
+
+
+
+i=2
+if(i==2):
+    c_model=create_model()
+    sgd = SGD(lr=0.001, decay=1e-6, momentum=0.9, nesterov=True)
+    c_model.compile(loss='categorical_crossentropy', optimizer=sgd, metrics=['accuracy'])
+    # Fit the model on the batches generated by datagen.flow().
+    j=int(pow(2,i))
+    filepath="WEIGHTS"+str(j)+".hdf5"
+    print(c_model.summary())
+    checkpoint=ModelCheckpoint(filepath,monitor='val_acc',verbose=1,save_best_only=True,save_weights_only=True,mode='max')
+    callback=[checkpoint]
+    history_callback=c_model.fit(X_train, Y_train,
+                                     batch_size=batch_size,
+                    
+                        epochs=nb_epoch, validation_data=(X_valid, Y_valid), callbacks=callback,verbose=1)
+    object_pi = history_callback
+    file_pi = open('History'+str(j)+'.txt', 'w') 
+    pickle.dump(object_pi, file_pi) 
+
+
+    	
+    
+
+
+else:
+    c_model=create_model()
+    m=int(pow(2,i-1))
+    c_model.load_weights("WEIGHTS"+str(m)+".hdf5")
+    sgd = SGD(lr=0.001, decay=1e-6, momentum=0.9, nesterov=True)
+    c_model.compile(loss='categorical_crossentropy', optimizer=sgd, metrics=['accuracy'])
+    # Fit the model on the batches generated by datagen.flow().
+    j=int(pow(2,i))
+    filepath="weight"+str(j)+".hdf5"
+    checkpoint=ModelCheckpoint(filepath,monitor='val_acc',verbose=1,save_best_only=True,save_weights_only=True,mode='max')
+    callback=[checkpoint]
+    history_callback=c_model.fit(X_train, Y_train,
+                                     batch_size=batch_size,
+                    
+                        nb_epoch=nb_epoch, validation_data=(X_valid, Y_valid), callbacks=callback,verbose=1)
+    object_pi = history_callback
+    file_pi = open('History'+str(j)+'.txt', 'w') 
+    pickle.dump(object_pi, file_pi) 
+    
+
+ 
+
+
+
+
+
